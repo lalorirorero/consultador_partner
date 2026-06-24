@@ -28,8 +28,9 @@ interface TokenCache {
   expiresAt: number; // epoch ms
 }
 
-// TTL del dataset en memoria (~5 minutos).
-const DATASET_TTL_MS = 5 * 60 * 1000;
+// TTL del dataset en memoria (~10 minutos). La data de negociaciones cambia
+// poco, y así evitamos re-exportar en cada búsqueda.
+const DATASET_TTL_MS = 10 * 60 * 1000;
 // Margen de seguridad para refrescar el token antes de que expire.
 const TOKEN_SKEW_MS = 60 * 1000;
 
@@ -163,8 +164,9 @@ async function fetchAllRows(): Promise<ZohoRow[]> {
     throw new Error(`Zoho no devolvió jobId: ${JSON.stringify(initJson).slice(0, 300)}`);
   }
 
-  // 2. Esperar a que el job termine (con timeout de seguridad).
-  const maxAttempts = 25;
+  // 2. Esperar a que el job termine (con timeout de seguridad). Usamos casi
+  // todo el presupuesto de maxDuration (~45s) porque el job puede ser lento.
+  const maxAttempts = 30;
   let completed = false;
   for (let i = 0; i < maxAttempts; i++) {
     await sleep(1500);
@@ -233,14 +235,27 @@ function buildDataset(rows: ZohoRow[]): DatasetCache {
   return { records, byRut, fetchedAt: Date.now() };
 }
 
+// Promesa de carga en curso: si llegan varias búsquedas con la caché fría,
+// todas comparten la misma exportación en lugar de lanzar un job cada una.
+let inFlight: Promise<DatasetCache> | null = null;
+
 async function getDataset(): Promise<DatasetCache> {
   const now = Date.now();
   if (datasetCache && now - datasetCache.fetchedAt < DATASET_TTL_MS) {
     return datasetCache;
   }
-  const rows = await fetchAllRows();
-  datasetCache = buildDataset(rows);
-  return datasetCache;
+  if (inFlight) return inFlight;
+
+  inFlight = (async () => {
+    const rows = await fetchAllRows();
+    datasetCache = buildDataset(rows);
+    return datasetCache;
+  })();
+  try {
+    return await inFlight;
+  } finally {
+    inFlight = null;
+  }
 }
 
 export interface SearchResult {
