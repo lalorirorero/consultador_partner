@@ -43,11 +43,12 @@ export default function Home() {
   return (
     <>
       <header className="header">
-        <span className="logo-mark">G</span>
-        <span className="logo-text">
-          <span className="geo">Geo</span>
-          <span className="victoria">Victoria</span>
-        </span>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          className="logo-img"
+          src="/logo-geovictoria.png"
+          alt="GeoVictoria"
+        />
       </header>
 
       <main className="container">
