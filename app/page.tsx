@@ -68,7 +68,7 @@ export default function Home() {
                 <input
                   className="search-input"
                   type="text"
-                  placeholder="Ej: 77029999-9 o Norte Verde SpA"
+                  placeholder="Ej: 777777777-0 o GeoVictoria"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   autoFocus
@@ -115,10 +115,6 @@ export default function Home() {
             </div>
           </div>
         </form>
-
-        <p className="footer-note">
-          GeoVictoria · Datos en vivo desde Zoho Analytics
-        </p>
       </main>
     </>
   );
