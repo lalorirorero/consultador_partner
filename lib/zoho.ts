@@ -113,6 +113,13 @@ async function getAccessToken(): Promise<string> {
   return tokenCache.accessToken;
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Esta vista de Zoho Analytics no permite export síncrono, así que usamos el
+// modelo de exportación asíncrono (Bulk Export API v2):
+//   1. GET .../bulk/.../views/{viewId}/data?CONFIG=... -> devuelve un jobId.
+//   2. GET .../bulk/.../exportjobs/{jobId} hasta "JOB COMPLETED".
+//   3. GET .../bulk/.../exportjobs/{jobId}/data -> descarga las filas.
 async function fetchAllRows(): Promise<ZohoRow[]> {
   const dc = env("ZOHO_DC");
   const workspaceId = env("ZOHO_WORKSPACE_ID");
@@ -120,43 +127,73 @@ async function fetchAllRows(): Promise<ZohoRow[]> {
   const orgId = env("ZOHO_ORG_ID");
 
   const accessToken = await getAccessToken();
+  const headers = {
+    Authorization: `Zoho-oauthtoken ${accessToken}`,
+    "ZANALYTICS-ORGID": orgId,
+  };
+  const bulkBase = `https://analyticsapi.zoho.${dc}/restapi/v2/bulk/workspaces/${workspaceId}`;
 
+  async function getJson(url: string, label: string): Promise<any> {
+    const res = await fetch(url, { method: "GET", headers });
+    const text = await res.text();
+    let json: any;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      throw new Error(`Respuesta inesperada de Zoho (${label}): ${text.slice(0, 300)}`);
+    }
+    if (!res.ok || json?.status === "failure") {
+      throw new Error(
+        `Error de Zoho Analytics (${label}, ${res.status}): ${
+          json?.data?.errorMessage || json?.errorMessage || text.slice(0, 300)
+        }`,
+      );
+    }
+    return json;
+  }
+
+  // 1. Iniciar el job de exportación.
   const config = encodeURIComponent(JSON.stringify({ responseFormat: "json" }));
-  const url = `https://analyticsapi.zoho.${dc}/restapi/v2/workspaces/${workspaceId}/views/${viewId}/data?CONFIG=${config}`;
-
-  const res = await fetch(url, {
-    method: "GET",
-    headers: {
-      Authorization: `Zoho-oauthtoken ${accessToken}`,
-      "ZANALYTICS-ORGID": orgId,
-    },
-  });
-
-  const text = await res.text();
-  let json: any;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    throw new Error(`Respuesta inesperada al leer la vista de Zoho: ${text.slice(0, 300)}`);
+  const initJson = await getJson(
+    `${bulkBase}/views/${viewId}/data?CONFIG=${config}`,
+    "iniciar export",
+  );
+  const jobId: string | undefined = initJson?.data?.jobId;
+  if (!jobId) {
+    throw new Error(`Zoho no devolvió jobId: ${JSON.stringify(initJson).slice(0, 300)}`);
   }
 
-  if (!res.ok) {
-    throw new Error(
-      `Error al leer datos de Zoho Analytics (${res.status}): ${
-        json?.data?.errorMessage || json?.errorMessage || text.slice(0, 300)
-      }`,
-    );
+  // 2. Esperar a que el job termine (con timeout de seguridad).
+  const maxAttempts = 25;
+  let completed = false;
+  for (let i = 0; i < maxAttempts; i++) {
+    await sleep(1500);
+    const statusJson = await getJson(`${bulkBase}/exportjobs/${jobId}`, "estado export");
+    const jobStatus = String(statusJson?.data?.jobStatus || "").toUpperCase();
+    if (jobStatus.includes("COMPLET")) {
+      completed = true;
+      break;
+    }
+    if (jobStatus.includes("FAIL") || jobStatus.includes("ERROR")) {
+      throw new Error(`El job de exportación de Zoho falló: ${jobStatus}`);
+    }
+  }
+  if (!completed) {
+    throw new Error("El job de exportación de Zoho no terminó a tiempo. Reintenta.");
   }
 
-  // La API v2 puede devolver las filas en distintas envolturas según versión.
-  // Cubrimos las formas más comunes.
-  const rows: ZohoRow[] | undefined =
-    json?.data ?? json?.response?.data ?? (Array.isArray(json) ? json : undefined);
+  // 3. Descargar los datos del job.
+  const dataJson = await getJson(`${bulkBase}/exportjobs/${jobId}/data`, "descargar datos");
+  const rows: ZohoRow[] | undefined = Array.isArray(dataJson?.data)
+    ? dataJson.data
+    : Array.isArray(dataJson)
+      ? dataJson
+      : undefined;
 
   if (!Array.isArray(rows)) {
     throw new Error(
-      `No se encontraron filas en la respuesta de Zoho. Estructura recibida: ${Object.keys(
-        json || {},
+      `No se encontraron filas en la respuesta de Zoho. Estructura: ${Object.keys(
+        dataJson || {},
       ).join(", ")}`,
     );
   }

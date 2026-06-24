@@ -5,6 +5,9 @@ import { searchPartner } from "@/lib/zoho";
 // de Node y nunca cachearse estáticamente.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// El export asíncrono de Zoho (iniciar job + poll + descargar) puede tardar
+// varios segundos en la primera carga (luego queda cacheado ~5 min).
+export const maxDuration = 60;
 
 export async function GET(req: NextRequest) {
   const query = (req.nextUrl.searchParams.get("q") || "").trim();
