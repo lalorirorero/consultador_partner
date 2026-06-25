@@ -54,8 +54,9 @@ export default function Home() {
       <main className="container">
         <h1 className="title">Buscador de RUTs</h1>
         <p className="help">
-          Para buscar una empresa, ingresa su RUT sin puntos pero con guion. Si la
-          empresa está en negociación con nosotros, aparecerá como{" "}
+          Para buscar una empresa, ingresa su RUT sin puntos y con guion. Si la
+          empresa se encuentra en negociación con nosotros o ya es cliente
+          directo de GeoVictoria, aparecerá como{" "}
           <strong>&ldquo;No Disponible&rdquo;</strong>. En caso contrario, se
           mostrará como <strong>&ldquo;Disponible&rdquo;</strong>.
         </p>
