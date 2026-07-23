@@ -73,9 +73,9 @@ export function looksLikeRut(value: string): boolean {
   return /^\d{6,}[0-9k]?$/.test(norm);
 }
 
-async function getAccessToken(): Promise<string> {
+async function getAccessToken(force = false): Promise<string> {
   const now = Date.now();
-  if (tokenCache && tokenCache.expiresAt - TOKEN_SKEW_MS > now) {
+  if (!force && tokenCache && tokenCache.expiresAt - TOKEN_SKEW_MS > now) {
     return tokenCache.accessToken;
   }
 
@@ -127,15 +127,25 @@ async function fetchAllRows(): Promise<ZohoRow[]> {
   const viewId = env("ZOHO_VIEW_ID");
   const orgId = env("ZOHO_ORG_ID");
 
-  const accessToken = await getAccessToken();
-  const headers = {
+  let accessToken = await getAccessToken();
+  const buildHeaders = () => ({
     Authorization: `Zoho-oauthtoken ${accessToken}`,
     "ZANALYTICS-ORGID": orgId,
-  };
+  });
   const bulkBase = `https://analyticsapi.zoho.${dc}/restapi/v2/bulk/workspaces/${workspaceId}`;
 
+  // Zoho invalida access tokens antiguos cuando se generan nuevos con el mismo
+  // refresh token. Con varias instancias serverless (cada una con su caché),
+  // un token cacheado puede quedar revocado antes de su expiración local y
+  // Zoho responde 401 "Invalid Oauthtoken". Ante un 401, se descarta el token
+  // cacheado, se pide uno nuevo y se reintenta la petición una vez.
   async function getJson(url: string, label: string): Promise<any> {
-    const res = await fetch(url, { method: "GET", headers });
+    let res = await fetch(url, { method: "GET", headers: buildHeaders() });
+    if (res.status === 401) {
+      tokenCache = null;
+      accessToken = await getAccessToken(true);
+      res = await fetch(url, { method: "GET", headers: buildHeaders() });
+    }
     const text = await res.text();
     let json: any;
     try {
